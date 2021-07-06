@@ -16,13 +16,20 @@ import tqdm
 
 batch_size = 100
 epochs = 100
-input_shape = 1000
 target_shape = 10
 arch = [128, 128]
 burnin = 60
 starting_epoch = 0
 seq_len = 300
 device = torch.device("cuda")
+
+vonenet_arch = None
+input_shape = 4096
+
+vonenet_arch = 'cornets'
+input_shape = 1000
+
+
 
 
 class SmoothStep(torch.autograd.Function):
@@ -117,7 +124,8 @@ def main():
                                                                dt=1000,
                                                                num_workers=4)
 
-    vonenet = get_model(model_arch='cornets', pretrained=False).to(device)
+    vonenet = get_model(model_arch=vonenet_arch, pretrained=False).to(device)
+    bottleneck = nn.Conv2d(512, 64, kernel_size=1, stride=1, bias=False).to(device)
     decolle = DECOLLE()
 
     loss_fn = torch.nn.SmoothL1Loss()
@@ -137,7 +145,11 @@ def main():
             decolle.reset()
             for k in (range(burnin, T)):
                 Sin = data_batch[:, k, :, :].to(device)
-                Sin = vonenet(Sin).detach()
+                Sin = vonenet(Sin)
+                if vonenet_arch == None:
+                    Sin = bottleneck(Sin).flatten(1).detach()
+                else:
+                    Sin = Sin.detach()
 
                 for lif, readout in zip(decolle.LIFs, decolle.readouts):
                     state, u, s = lif.forward(Sin)
@@ -165,7 +177,12 @@ def main():
             for k in (range(0, T)):
                 target = target_batch[:, k, :]
                 Sin = data_batch[:, k, :, :].to(device)
-                Sin = vonenet(Sin).detach()
+                Sin = vonenet(Sin)
+                if vonenet_arch == None:
+                    Sin = bottleneck(Sin).flatten(1).detach()
+                else:
+                    Sin = Sin.detach()
+
                 for l, (lif, readout) in enumerate(zip(decolle.LIFs, decolle.readouts)):
                     state, u, s = lif.forward(Sin)
                     r = readout(s)
