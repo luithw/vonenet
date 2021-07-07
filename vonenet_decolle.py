@@ -17,18 +17,18 @@ import tqdm
 batch_size = 100
 epochs = 100
 target_shape = 10
-arch = [128, 128]
+arch = [32, 64, 64]
+kernel_size = [3, 3, 3]
 burnin = 60
 starting_epoch = 0
 seq_len = 300
 device = torch.device("cuda")
 
 vonenet_arch = None
-input_shape = 4096
+decolle_input_shape = [512, 8, 8]
 
-vonenet_arch = 'cornets'
-input_shape = 1000
-
+# vonenet_arch = 'cornets'
+# decolle_input_shape = 1000
 
 
 
@@ -49,14 +49,14 @@ class SmoothStep(torch.autograd.Function):
 smooth_step = SmoothStep().apply
 
 
-class LIFDenseLayer(nn.Module):
+class LIFLayer(nn.Module):
     NeuronState = namedtuple('NeuronState', ['P', 'R', 'U', 'S'])
 
-    def __init__(self, in_channels, out_channels, bias=True, alpha=.9, beta=.85):
-        super(LIFDenseLayer, self).__init__()
-        self.base_layer = nn.Linear(in_channels, out_channels)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
+    def __init__(self, in_shape, out_shape, kernel, alpha=.9, beta=.85):
+        super(LIFLayer, self).__init__()
+        self.base_layer = nn.Conv2d(in_shape[0], out_shape[0], kernel)
+        self.in_shape = in_shape
+        self.out_shape = out_shape
         self.alpha = alpha
         self.beta = beta
         self.reset()
@@ -72,13 +72,12 @@ class LIFDenseLayer(nn.Module):
         return self
 
     def reset(self):
-        self.state = self.NeuronState(P=torch.zeros(batch_size, self.in_channels),
-                                      R=torch.zeros(batch_size, self.out_channels),
-                                      U=torch.zeros(batch_size, self.out_channels),
-                                      S=torch.zeros(batch_size, self.out_channels))
+        self.state = self.NeuronState(P=torch.zeros([batch_size] + self.in_shape),
+                                      R=torch.zeros([batch_size] + self.out_shape),
+                                      U=torch.zeros([batch_size] + self.out_shape),
+                                      S=torch.zeros([batch_size] + self.out_shape))
 
     def forward(self, Sin_t):
-        Sin_t = Sin_t.view(Sin_t.size(0), -1)
         self.cuda()
         state = self.state
         P = self.alpha * state.P + Sin_t
@@ -90,6 +89,9 @@ class LIFDenseLayer(nn.Module):
         return self.state, U, S
 
 
+def get_out_shape(dim, kernel):
+    return int((dim - (kernel - 1) - 1) + 1)
+
 class DECOLLE(nn.Module):
 
     def __init__(self):
@@ -99,14 +101,15 @@ class DECOLLE(nn.Module):
         self.readouts = nn.ModuleList()
         self.device = device
 
-        in_shape = input_shape
-        for n_neurons in arch:
-            self.LIFs.append(LIFDenseLayer(in_channels=in_shape, out_channels=n_neurons).to(self.device))
-            readout = nn.Linear(n_neurons, target_shape).to(self.device)
+        in_shape = decolle_input_shape
+        for n_neurons, kernel in zip(arch, kernel_size):
+            out_shape = [n_neurons, get_out_shape(in_shape[1], kernel), get_out_shape(in_shape[2], kernel)]
+            self.LIFs.append(LIFLayer(in_shape, out_shape, kernel).to(self.device))
+            readout = nn.Linear(np.prod(out_shape), target_shape).to(self.device)
             for param in readout.parameters():
                 param.requires_grad = False
             self.readouts.append(readout)
-            in_shape = n_neurons
+            in_shape = out_shape
 
     def reset(self):
         for lif in self.LIFs:
@@ -125,7 +128,7 @@ def main():
                                                                num_workers=4)
 
     vonenet = get_model(model_arch=vonenet_arch, pretrained=False).to(device)
-    bottleneck = nn.Conv2d(512, 64, kernel_size=1, stride=1, bias=False).to(device)
+    # bottleneck = nn.Conv2d(512, 64, kernel_size=1, stride=1, bias=False).to(device)
     decolle = DECOLLE()
 
     loss_fn = torch.nn.SmoothL1Loss()
@@ -146,13 +149,14 @@ def main():
             for k in (range(burnin, T)):
                 Sin = data_batch[:, k, :, :].to(device)
                 Sin = vonenet(Sin).detach()
-                if vonenet_arch == None:
-                    # When only using voneblock, we need a bottleneck layer to shrink the number of channels.
-                    Sin = bottleneck(Sin).flatten(1)
+
+                # if vonenet_arch == None:
+                #     # When only using voneblock, we need a bottleneck layer to shrink the number of channels.
+                #     Sin = bottleneck(Sin).flatten(1)
 
                 for lif, readout in zip(decolle.LIFs, decolle.readouts):
                     state, u, s = lif.forward(Sin)
-                    r = readout(s)
+                    r = readout(s.view(s.size(0), -1))
                     Sin = s.detach()
                     if k > burnin:
                         loss_t = loss_fn(r, target_batch[:, k, :].to(device))
@@ -177,13 +181,13 @@ def main():
                 target = target_batch[:, k, :]
                 Sin = data_batch[:, k, :, :].to(device)
                 Sin = vonenet(Sin).detach()
-                if vonenet_arch == None:
-                    # When only using voneblock, we need a bottleneck layer to shrink the number of channels.
-                    Sin = bottleneck(Sin).flatten(1)
+                # if vonenet_arch == None:
+                #     # When only using voneblock, we need a bottleneck layer to shrink the number of channels.
+                #     Sin = bottleneck(Sin).flatten(1)
 
                 for l, (lif, readout) in enumerate(zip(decolle.LIFs, decolle.readouts)):
                     state, u, s = lif.forward(Sin)
-                    r = readout(s)
+                    r = readout(s.view(s.size(0), -1))
                     Sin = s.detach()
                     if k > burnin:
                         predicts[l][k - burnin] = r.clone().data.cpu().numpy()
