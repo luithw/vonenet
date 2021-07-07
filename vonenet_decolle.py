@@ -128,7 +128,6 @@ def main():
                                                                num_workers=4)
 
     vonenet = get_model(model_arch=vonenet_arch, pretrained=False).to(device)
-    # bottleneck = nn.Conv2d(512, 64, kernel_size=1, stride=1, bias=False).to(device)
     decolle = DECOLLE()
 
     loss_fn = torch.nn.SmoothL1Loss()
@@ -149,10 +148,6 @@ def main():
             for k in (range(burnin, T)):
                 Sin = data_batch[:, k, :, :].to(device)
                 Sin = vonenet(Sin).detach()
-
-                # if vonenet_arch == None:
-                #     # When only using voneblock, we need a bottleneck layer to shrink the number of channels.
-                #     Sin = bottleneck(Sin).flatten(1)
 
                 for lif, readout in zip(decolle.LIFs, decolle.readouts):
                     state, u, s = lif.forward(Sin)
@@ -181,9 +176,6 @@ def main():
                 target = target_batch[:, k, :]
                 Sin = data_batch[:, k, :, :].to(device)
                 Sin = vonenet(Sin).detach()
-                # if vonenet_arch == None:
-                #     # When only using voneblock, we need a bottleneck layer to shrink the number of channels.
-                #     Sin = bottleneck(Sin).flatten(1)
 
                 for l, (lif, readout) in enumerate(zip(decolle.LIFs, decolle.readouts)):
                     state, u, s = lif.forward(Sin)
