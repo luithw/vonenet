@@ -145,11 +145,10 @@ def main():
             decolle.reset()
             for k in (range(burnin, T)):
                 Sin = data_batch[:, k, :, :].to(device)
-                Sin = vonenet(Sin)
+                Sin = vonenet(Sin).detach()
                 if vonenet_arch == None:
-                    Sin = bottleneck(Sin).flatten(1).detach()
-                else:
-                    Sin = Sin.detach()
+                    # When only using voneblock, we need a bottleneck layer to shrink the number of channels.
+                    Sin = bottleneck(Sin).flatten(1)
 
                 for lif, readout in zip(decolle.LIFs, decolle.readouts):
                     state, u, s = lif.forward(Sin)
@@ -177,11 +176,10 @@ def main():
             for k in (range(0, T)):
                 target = target_batch[:, k, :]
                 Sin = data_batch[:, k, :, :].to(device)
-                Sin = vonenet(Sin)
+                Sin = vonenet(Sin).detach()
                 if vonenet_arch == None:
-                    Sin = bottleneck(Sin).flatten(1).detach()
-                else:
-                    Sin = Sin.detach()
+                    # When only using voneblock, we need a bottleneck layer to shrink the number of channels.
+                    Sin = bottleneck(Sin).flatten(1)
 
                 for l, (lif, readout) in enumerate(zip(decolle.LIFs, decolle.readouts)):
                     state, u, s = lif.forward(Sin)
