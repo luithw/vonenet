@@ -23,13 +23,13 @@ starting_epoch = 0
 seq_len = 300
 device = torch.device("cuda")
 
-# vonenet_arch = None
-# decolle_input_shape = [512, 8, 8]
-# decolle_arch = [("conv", 64, 3), ("conv", 128, 3), ("conv", 128, 3)]
+vonenet_arch = None
+decolle_input_shape = [512, 32, 32]
+decolle_arch = [("conv", 64, 3), ("conv", 128, 3), ("conv", 128, 3)]
 
-vonenet_arch = 'cornets'
-decolle_input_shape = [512]
-decolle_arch = [("dense", 64, 1), ("dense", 128, 1), ("dense", 128, 1)]
+# vonenet_arch = 'cornets'
+# decolle_input_shape = [512]
+# decolle_arch = [("dense", 64, 1), ("dense", 128, 1), ("dense", 128, 1)]
 
 
 
@@ -134,7 +134,7 @@ def main():
                                                                dt=1000,
                                                                num_workers=4)
 
-    vonenet = get_model(model_arch=vonenet_arch, pretrained=False).to(device)
+    vonenet = get_model(model_arch=vonenet_arch, pretrained=False, stride=1, sf_max=6, visual_degrees=2).to(device)
     decolle_net = DECOLLE()
 
     loss_fn = torch.nn.SmoothL1Loss()
