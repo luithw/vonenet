@@ -17,18 +17,19 @@ import tqdm
 batch_size = 100
 epochs = 100
 target_shape = 10
-arch = [32, 64, 64]
-kernel_size = [3, 3, 3]
+
 burnin = 60
 starting_epoch = 0
 seq_len = 300
 device = torch.device("cuda")
 
-vonenet_arch = None
-decolle_input_shape = [512, 8, 8]
+# vonenet_arch = None
+# decolle_input_shape = [512, 8, 8]
+# decolle_arch = [("conv", 64, 3), ("conv", 128, 3), ("conv", 128, 3)]
 
-# vonenet_arch = 'cornets'
-# decolle_input_shape = 1000
+vonenet_arch = 'cornets'
+decolle_input_shape = [512]
+decolle_arch = [("dense", 64, 1), ("dense", 128, 1), ("dense", 128, 1)]
 
 
 
@@ -52,9 +53,12 @@ smooth_step = SmoothStep().apply
 class LIFLayer(nn.Module):
     NeuronState = namedtuple('NeuronState', ['P', 'R', 'U', 'S'])
 
-    def __init__(self, in_shape, out_shape, kernel, alpha=.9, beta=.85):
+    def __init__(self, layer_type, in_shape, out_shape, kernel, alpha=.9, beta=.85):
         super(LIFLayer, self).__init__()
-        self.base_layer = nn.Conv2d(in_shape[0], out_shape[0], kernel)
+        if layer_type == "conv":
+            self.base_layer = nn.Conv2d(in_shape[0], out_shape[0], kernel)
+        if layer_type == "dense":
+            self.base_layer = nn.Linear(in_shape[0], out_shape[0])
         self.in_shape = in_shape
         self.out_shape = out_shape
         self.alpha = alpha
@@ -102,9 +106,12 @@ class DECOLLE(nn.Module):
         self.device = device
 
         in_shape = decolle_input_shape
-        for n_neurons, kernel in zip(arch, kernel_size):
-            out_shape = [n_neurons, get_out_shape(in_shape[1], kernel), get_out_shape(in_shape[2], kernel)]
-            self.LIFs.append(LIFLayer(in_shape, out_shape, kernel).to(self.device))
+        for layer_type, n_neurons, kernel in decolle_arch:
+            if layer_type == "conv":
+                out_shape = [n_neurons, get_out_shape(in_shape[1], kernel), get_out_shape(in_shape[2], kernel)]
+            if layer_type == "dense":
+                out_shape = [n_neurons]
+            self.LIFs.append(LIFLayer(layer_type, in_shape, out_shape, kernel).to(self.device))
             readout = nn.Linear(np.prod(out_shape), target_shape).to(self.device)
             for param in readout.parameters():
                 param.requires_grad = False
@@ -128,10 +135,10 @@ def main():
                                                                num_workers=4)
 
     vonenet = get_model(model_arch=vonenet_arch, pretrained=False).to(device)
-    decolle = DECOLLE()
+    decolle_net = DECOLLE()
 
     loss_fn = torch.nn.SmoothL1Loss()
-    opt = torch.optim.Adam(chain(*[lif.parameters() for lif in decolle.LIFs]), lr=1e-5,
+    opt = torch.optim.Adam(chain(*[lif.parameters() for lif in decolle_net.LIFs]), lr=1e-5,
                            betas=[0., .95])
 
     for e in range(starting_epoch, epochs):
@@ -144,12 +151,14 @@ def main():
             target_batch = torch.Tensor(target_batch).to(device)
             T = data_batch.shape[1]
 
-            decolle.reset()
+            decolle_net.reset()
             for k in (range(burnin, T)):
                 Sin = data_batch[:, k, :, :].to(device)
-                Sin = vonenet(Sin).detach()
+                Sin = vonenet(Sin)
+                if vonenet_arch == "cornets":
+                    Sin = Sin.view(Sin.shape[0], -1)
 
-                for lif, readout in zip(decolle.LIFs, decolle.readouts):
+                for lif, readout in zip(decolle_net.LIFs, decolle_net.readouts):
                     state, u, s = lif.forward(Sin)
                     r = readout(s.view(s.size(0), -1))
                     Sin = s.detach()
@@ -161,9 +170,9 @@ def main():
 
         # Test
         predicts = []
-        for l in arch:
+        for l in range(len(decolle_arch)):
             predicts.append(np.zeros([seq_len - burnin, batch_size, target_shape]))
-        true_pos = [[] for n in arch]
+        true_pos = [[] for n in  range(len(decolle_arch))]
         for b, (data_batch, target_batch) in enumerate(tqdm.tqdm(iter(gen_test), desc='Testing')):
             if target_batch.shape[0] != batch_size:
                 break
@@ -171,13 +180,15 @@ def main():
             target_batch = torch.Tensor(target_batch).to(device)
             T = data_batch.shape[1]
 
-            decolle.reset()
+            decolle_net.reset()
             for k in (range(0, T)):
                 target = target_batch[:, k, :]
                 Sin = data_batch[:, k, :, :].to(device)
-                Sin = vonenet(Sin).detach()
+                Sin = vonenet(Sin)
+                if vonenet_arch == "cornets":
+                    Sin = Sin.view(Sin.size(0), -1)
 
-                for l, (lif, readout) in enumerate(zip(decolle.LIFs, decolle.readouts)):
+                for l, (lif, readout) in enumerate(zip(decolle_net.LIFs, decolle_net.readouts)):
                     state, u, s = lif.forward(Sin)
                     r = readout(s.view(s.size(0), -1))
                     Sin = s.detach()
@@ -185,11 +196,12 @@ def main():
                         predicts[l][k - burnin] = r.clone().data.cpu().numpy()
 
             # As there is one readout per timestep, we need to sum the prediction from individual timestep
-            for l in range(len(arch)):
+            for l in range(len(decolle_arch)):
                 tp = (predicts[l].sum(0).argmax(-1) == target.cpu().numpy().argmax(-1)).astype(float).tolist()
                 true_pos[l] += tp
         test_acc = np.array(true_pos).mean(-1)
         print("Test accuracy: %r" % [acc for acc in test_acc])
+
 
 if __name__ == "__main__":
     main()

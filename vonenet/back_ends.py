@@ -333,5 +333,5 @@ class CORnetSBackEnd(nn.Module):
         x = self.V2(x)
         x = self.V4(x)
         x = self.IT(x)
-        x = self.decoder(x)
+        # x = self.decoder(x)
         return x
