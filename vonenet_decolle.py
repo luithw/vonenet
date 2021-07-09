@@ -176,7 +176,6 @@ def main():
                         loss_t.backward()
                         opt.step()
                         opt.zero_grad()
-        import pdb; pdb.set_trace()
 
         # Test
         predicts = []
