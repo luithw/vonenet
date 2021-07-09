@@ -22,10 +22,13 @@ burnin = 60
 starting_epoch = 0
 seq_len = 300
 device = torch.device("cuda")
+vone_thresh = 0.01
 
 vonenet_arch = None
-decolle_input_shape = [512, 32, 32]
+decolle_input_shape = [128, 8, 8]
+# decolle_input_shape = [2, 32, 32]
 decolle_arch = [("conv", 64, 3), ("conv", 128, 3), ("conv", 128, 3)]
+# decolle_arch = [("conv", 32, 3), ("conv", 64, 3), ("conv", 64, 3)]
 
 # vonenet_arch = 'cornets'
 # decolle_input_shape = [512]
@@ -134,12 +137,15 @@ def main():
                                                                dt=1000,
                                                                num_workers=4)
 
-    vonenet = get_model(model_arch=vonenet_arch, pretrained=False, stride=1, sf_max=6, visual_degrees=2).to(device)
+    vonenet = get_model(model_arch=vonenet_arch, pretrained=False, stride=4, sf_max=6,
+                        visual_degrees=2, noise_mode=None, simple_channels=64, complex_channels=64).to(device)
+    # vonenet = get_model(model_arch=vonenet_arch, pretrained=False).to(device)
     decolle_net = DECOLLE()
 
     loss_fn = torch.nn.SmoothL1Loss()
     opt = torch.optim.Adam(chain(*[lif.parameters() for lif in decolle_net.LIFs]), lr=1e-5,
                            betas=[0., .95])
+
 
     for e in range(starting_epoch, epochs):
 
@@ -155,6 +161,9 @@ def main():
             for k in (range(burnin, T)):
                 Sin = data_batch[:, k, :, :].to(device)
                 Sin = vonenet(Sin)
+
+                Sin = (Sin > vone_thresh).float()
+
                 if vonenet_arch == "cornets":
                     Sin = Sin.view(Sin.shape[0], -1)
 
@@ -167,6 +176,7 @@ def main():
                         loss_t.backward()
                         opt.step()
                         opt.zero_grad()
+        import pdb; pdb.set_trace()
 
         # Test
         predicts = []
@@ -185,6 +195,8 @@ def main():
                 target = target_batch[:, k, :]
                 Sin = data_batch[:, k, :, :].to(device)
                 Sin = vonenet(Sin)
+                Sin = (Sin > vone_thresh).float()
+
                 if vonenet_arch == "cornets":
                     Sin = Sin.view(Sin.size(0), -1)
 
@@ -205,3 +217,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# nohup python vonenet_decolle.py > nohup.voneblock_stride_4_reduced_channels_disabled_noise 2>&1
